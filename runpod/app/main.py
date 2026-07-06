@@ -30,6 +30,7 @@ Variables d'environnement :
 # ── Imports ───────────────────────────────────────────────────────────────────
 
 import hashlib
+from http import client
 import io
 import json
 from logging import config
@@ -52,8 +53,9 @@ logger = logging.getLogger("uvicorn.error")
 # Dans votre route :
 
 
-import google.generativeai as genai
-from google.generativeai import types
+from google import genai
+from google.genai import types
+
 import httpx
 import numpy as np
 import scipy.io.wavfile as _wav
@@ -727,17 +729,16 @@ def generate_answer(question: str, results: list,
         
         print(f"[AVANT GEN]...")  # Affiche les 200 premiers caractères du prompt
         # Requête à l'API Gemini
-        config = types.GenerationConfig(
-        max_output_tokens=500,  # ~2000 caractères max
-        temperature=0.2,         # Idéal pour le RAG
-        # On passe le paramètre sous forme de dictionnaire brut
-        thinking_config={"thinking_budget": 0} 
-        )
-
         response = _llm.models.generate_content(
-        model='gemini-2.5-flash',
+        model="gemini-2.5-flash",
         contents=prompt_complet,
-        config=config
+        config=types.GenerateContentConfig(
+        temperature=0.2,
+        max_output_tokens=500,
+        thinking_config=types.ThinkingConfig(
+            thinking_budget=0
+            ),
+        ),
         )
         print(f"[APRES GEN]...{len(prompt_complet)}")
         
