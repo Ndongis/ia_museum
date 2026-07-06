@@ -76,7 +76,7 @@ WHISPER_DEVICE    = os.getenv("WHISPER_DEVICE",    "cuda")
 WHISPER_COMPUTE   = os.getenv("WHISPER_COMPUTE",   "float16")
 KOKORO_VOICE      = os.getenv("KOKORO_VOICE",      "ff_siwis")
 KOKORO_SPEED      = float(os.getenv("KOKORO_SPEED",      "1.0"))
-KOKORO_MODEL_DIR  = os.getenv("KOKORO_MODEL_DIR",  "kokoro_models")
+KOKORO_MODEL_DIR  = os.getenv("KOKORO_MODEL_DIR",  "/kokoro_models")
 TTS_MAX_CHARS     = int(os.getenv("TTS_MAX_CHARS", "250"))
 EMBED_MODEL       = os.getenv("EMBED_MODEL",       "intfloat/multilingual-e5-base")
 CACHE_TTL         = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
@@ -722,9 +722,10 @@ def generate_answer(question: str, results: list,
         print(f"[Génération] Question : {question[:50]} | Langue : {langue_resolue}")
         # Construction sécurisée du prompt
         prompt_complet = _build_prompt(question, results, salle_nom, exposition_nom, langue_resolue)
-        
+        print(f"[AVANT GEN]...")  # Affiche les 200 premiers caractères du prompt
         # Requête à l'API Gemini
         response = _llm.generate_content(prompt_complet)
+        print(f"[APRES GEN]...")
         
         if response and hasattr(response, 'text') and response.text:
             answer = response.text
