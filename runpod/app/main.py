@@ -799,7 +799,7 @@ def _load_kokoro() -> None:
     _kokoro_model = Kokoro(
     model_path=str(model_path),
     voices_path=str(voices_path),
-    providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+    
 )   
     print(ort.get_available_providers())
     print(f"[TTS] Kokoro-ONNX prêt en {time.time() - t0:.1f}s")
