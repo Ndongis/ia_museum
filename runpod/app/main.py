@@ -728,11 +728,10 @@ def generate_answer(question: str, results: list,
         print(f"[AVANT GEN]...")  # Affiche les 200 premiers caractères du prompt
         # Requête à l'API Gemini
         config = types.GenerationConfig(
-        thinking_config=types.ThinkingConfig(
-        thinking_budget=0
-        ),
         max_output_tokens=500,  # ~2000 caractères max
-        temperature=0.2         # Idéal pour le RAG
+        temperature=0.2,         # Idéal pour le RAG
+        # On passe le paramètre sous forme de dictionnaire brut
+        thinking_config={"thinking_budget": 0} 
         )
 
         response = _llm.models.generate_content(
