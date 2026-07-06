@@ -53,7 +53,7 @@ logger = logging.getLogger("uvicorn.error")
 
 
 import google.generativeai as genai
-from google.genai import types
+from google.generativeai import types
 import httpx
 import numpy as np
 import scipy.io.wavfile as _wav
