@@ -17,9 +17,7 @@ google-genai
 faster-whisper
 
 # TTS
-kokoro-onnx
-onnxruntime
-onnxruntime-gpu
+kokoro
 
 # HTTP + Cache
 httpx

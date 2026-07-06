@@ -73,7 +73,7 @@ import torch
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
-
+os.environ["ONNX_PROVIDER"] = "CUDAExecutionProvider"
 GEMINI_API_KEY    = os.getenv("GEMINI_API_KEY",    "")
 GEMINI_MODEL      = os.getenv("GEMINI_MODEL",      "gemini-2.5-flash-lite")
 WHISPER_MODEL     = os.getenv("WHISPER_MODEL",     "medium")
