@@ -26,4 +26,4 @@ su postgres -c "psql -d vectordb -c \"CREATE EXTENSION IF NOT EXISTS vector;\""
 
 
 echo "[entrypoint] PostgreSQL prêt. Lancement de l'application..."
-exec uvicorn runpod.app.main:api --host 0.0.0.0 --port 7860 --timeout-keep-alive 300
+exec uvicorn runpod.app.main:api --host 0.0.0.0 --port 8000
