@@ -32,6 +32,7 @@ Variables d'environnement :
 import hashlib
 import io
 import json
+from logging import config
 import os
 import pathlib
 
@@ -52,6 +53,7 @@ logger = logging.getLogger("uvicorn.error")
 
 
 import google.generativeai as genai
+from google.genai import types
 import httpx
 import numpy as np
 import scipy.io.wavfile as _wav
@@ -722,9 +724,22 @@ def generate_answer(question: str, results: list,
         print(f"[Génération] Question : {question[:50]} | Langue : {langue_resolue}")
         # Construction sécurisée du prompt
         prompt_complet = _build_prompt(question, results, salle_nom, exposition_nom, langue_resolue)
+        
         print(f"[AVANT GEN]...")  # Affiche les 200 premiers caractères du prompt
         # Requête à l'API Gemini
-        response = _llm.generate_content(prompt_complet)
+        config = types.GenerateContentConfig(
+        thinking_config=types.ThinkingConfig(
+        thinking_budget=0  # Accepté par le SDK, mais l'API gérera son minimum en interne
+        ),
+        max_output_tokens=500, # Réduit à 500 pour garantir des "phrases courtes" et économiser de la bande passante
+        temperature=0.2
+        )
+
+        response = _llm.models.generate_content(
+        model='gemini-2.5-flash',
+        contents=prompt_complet,
+        config=config
+        )
         print(f"[APRES GEN]...{len(prompt_complet)}")
         
         if response and hasattr(response, 'text') and response.text:
