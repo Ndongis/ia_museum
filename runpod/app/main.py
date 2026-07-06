@@ -144,7 +144,6 @@ Ne coupe JAMAIS une phrase en plein milieu."""
 # ── État global ───────────────────────────────────────────────────────────────
 
 _model:          SentenceTransformer   = None
-_llm:            genai.GenerativeModel = None
 _embeddings:     np.ndarray            = None
 
 _metadata:       list[dict]            = []
@@ -1062,11 +1061,7 @@ def initialize() -> None:
 
     print("=== STEP 3 : configuration de Gemini ===")
     if GEMINI_API_KEY:
-        genai.configure(api_key=GEMINI_API_KEY)
-        _llm = genai.GenerativeModel(
-            GEMINI_MODEL,
-            generation_config=genai.GenerationConfig(temperature=0.7),
-        )
+        _llm = genai.Client(api_key=GEMINI_API_KEY)
         print(f"  Gemini : {GEMINI_MODEL}")
     else:
         print("WARN : GEMINI_API_KEY non définie.")
