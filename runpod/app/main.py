@@ -829,6 +829,7 @@ def text_to_speech(text: str, speed: float = KOKORO_SPEED, max_chars: int | None
     t0 = time.time()
     SEUIL_DECOUPAGE=150
     # 4. Synthèse adaptative (Directe vs Découpée)
+    print(f"[TTS] Génération {len(text)} chars, voice={voice}, lang={lang_code}, speed={speed}")
     if len(text) <= SEUIL_DECOUPAGE:
         samples, sample_rate = _kokoro_model.create(text, voice=voice, speed=speed, lang=lang_code)
     else:
