@@ -1149,7 +1149,9 @@ def health():
 def query(req: QueryRequest):
     logger.info(f"langue {req.langue}")
     results = search_documents(req.question, req.top_k)
+    print(f"[QUERY] {req.question} → {len(results)} résultats")
     answer  = generate_answer(req.question, results, req.salle_nom, req.exposition_nom, req.langue)
+    print(f"[QUERY_REPONSE] Réponse : {answer[:100]}...")
     formatted_sources = []
     for r in results:
         if isinstance(r, dict):
