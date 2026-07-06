@@ -46,6 +46,7 @@ from contextlib import asynccontextmanager
 from functools import lru_cache
 from math import gcd
 import logging
+import onnxruntime as ort
 
 # Récupérer le logger d'uvicorn
 logger = logging.getLogger("uvicorn.error")
@@ -795,7 +796,12 @@ def _load_kokoro() -> None:
         raise FileNotFoundError(f"Modèle introuvable : {model_path}")
     print("[TTS] Chargement kokoro-onnx...")
     t0 = time.time()
-    _kokoro_model = Kokoro(str(model_path), str(voices_path))
+    _kokoro_model = Kokoro(
+    model_path=str(model_path),
+    voices_path=str(voices_path),
+    providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+)   
+    print(ort.get_available_providers())
     print(f"[TTS] Kokoro-ONNX prêt en {time.time() - t0:.1f}s")
 
 
