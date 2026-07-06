@@ -1327,7 +1327,17 @@ async def explain(req: ExplainRequest):
     if answer is None:
         try:
             t0     = time.time()
-            answer = _llm.generate_content(prompt).text
+            answer = response = _llm.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                temperature=0.2,
+                max_output_tokens=500,
+                thinking_config=types.ThinkingConfig(
+                 thinking_budget=0
+                ),
+             ),
+            ).text
             print(f"[EXPLAIN] Gemini : {(time.time()-t0)*1000:.0f}ms | {len(answer)} chars")
             if _answer_cache is not None:
                 _answer_cache[explain_key] = answer
