@@ -1035,7 +1035,7 @@ def initialize() -> None:
     # _model = SentenceTransformer(EMBED_MODEL, device="cpu")
     # _model.encode(["warmup"], normalize_embeddings=True)
     _create_table_documents()
-    _model = SentenceTransformer(EMBED_MODEL, device='cpu')
+    _model = SentenceTransformer(EMBED_MODEL, device='cuda')
     #_load_embedding_model()
     print(f"  Modèle {EMBED_MODEL} prêt.")
 
