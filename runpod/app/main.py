@@ -144,6 +144,7 @@ Ne coupe JAMAIS une phrase en plein milieu."""
 # ── État global ───────────────────────────────────────────────────────────────
 
 _model:          SentenceTransformer   = None
+_llm = None
 _embeddings:     np.ndarray            = None
 
 _metadata:       list[dict]            = []
