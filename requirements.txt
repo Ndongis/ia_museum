@@ -11,7 +11,7 @@ numpy
 scipy
 
 # LLM
-google-generativeai
+google-genai
 
 # STT
 faster-whisper
