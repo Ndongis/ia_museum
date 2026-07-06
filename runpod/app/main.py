@@ -599,7 +599,7 @@ def build_embeddings() -> None:
 def embed_question(question):
     return _model.encode(question).tolist()
 
-def search_documents(question: str, top_k: int = 5):
+def search_documents(question: str, top_k: int = 2):
     global cur, conn
     question_embedding = embed_question(question)
     
@@ -725,7 +725,7 @@ def generate_answer(question: str, results: list,
         print(f"[AVANT GEN]...")  # Affiche les 200 premiers caractères du prompt
         # Requête à l'API Gemini
         response = _llm.generate_content(prompt_complet)
-        print(f"[APRES GEN]...")
+        print(f"[APRES GEN]...{len(prompt_complet)}")
         
         if response and hasattr(response, 'text') and response.text:
             answer = response.text
