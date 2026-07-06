@@ -773,7 +773,7 @@ def kokoro_ready() -> bool:
 def _load_kokoro() -> None:
     global _kokoro_model
     from kokoro_onnx import Kokoro
-    model_path  = pathlib.Path(KOKORO_MODEL_DIR) / "kokoro-v1.0.onnx"
+    model_path  = pathlib.Path(KOKORO_MODEL_DIR) / "kokoro-v1.0.fp16-gpu.onnx"
     voices_path = pathlib.Path(KOKORO_MODEL_DIR) / "voices-v1.0.bin"
     if not model_path.exists():
         raise FileNotFoundError(f"Modèle introuvable : {model_path}")
