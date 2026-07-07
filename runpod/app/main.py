@@ -1239,6 +1239,7 @@ async def stt_query_tts(
     bien_titre: str | None = None,
     langue: str | None = None,
 ):
+    print(f"[STT-QUERY-TTS] salle={salle_nom} expo={exposition_nom} bien={bien_titre} top_k={top_k} langue={langue}")
     lang        = _resolve_lang(langue)
     audio_bytes = await audio.read()
     if not audio_bytes:
@@ -1254,7 +1255,7 @@ async def stt_query_tts(
 
     if not salle_nom and not exposition_nom:
         return _wav_response("Vous n'etes pas encore dans une salle d'exposition. Veuillez vous deplacer vers une salle.")
-
+    print(f"[STT-QUERY-TTS] Transcription audio ({len(audio_bytes)} bytes)...")
     try:
         question = _transcribe(audio_bytes, audio.content_type or "audio/wav",langue=langue)
     except Exception as exc:
