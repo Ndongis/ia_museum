@@ -805,8 +805,46 @@ def _load_kokoro() -> None:
     print(f"[TTS] Kokoro-ONNX prêt en {time.time() - t0:.1f}s")
 
 
+import re
+import time
+import pathlib
+
+# Seuil relevé : Kokoro gère bien des textes plus longs en un seul appel,
+# ce qui évite le coût fixe (phonémisation espeak + lancement CUDA) de chaque appel.
+SEUIL_DECOUPAGE = 300
+
+# Taille cible d'un segment après regroupement (évite trop de tout petits appels
+# même quand le texte doit être découpé sur . ! ?)
+TAILLE_SEGMENT_CIBLE = 250
+
+
+def _decouper_phrases(text: str) -> list[str]:
+    """Découpe uniquement sur la ponctuation forte (. ! ?), jamais sur la virgule.
+    Les virgules n'ont pas besoin d'être des points de coupe : Kokoro gère
+    très bien les pauses internes d'une phrase."""
+    return [p.strip() for p in re.split(r'(?<=[.!?])\s+', text) if p.strip()]
+
+
+def _regrouper_segments(parts: list[str], taille_max: int = TAILLE_SEGMENT_CIBLE) -> list[str]:
+    """Regroupe des phrases courtes ensemble pour minimiser le nombre d'appels
+    à _kokoro_model.create(), tout en respectant une taille max par appel."""
+    groupes: list[str] = []
+    courant = ""
+    for p in parts:
+        candidat = f"{courant} {p}".strip() if courant else p
+        if len(candidat) <= taille_max:
+            courant = candidat
+        else:
+            if courant:
+                groupes.append(courant)
+            courant = p
+    if courant:
+        groupes.append(courant)
+    return groupes
+
+
 def text_to_speech(text: str, speed: float = KOKORO_SPEED, max_chars: int | None = None,
-                   cache_key: str | None = None, langue: str | None = None) -> str:
+                    cache_key: str | None = None, langue: str | None = None) -> str:
     if _kokoro_model is None:
         raise RuntimeError("Kokoro non initialisé")
 
@@ -815,6 +853,10 @@ def text_to_speech(text: str, speed: float = KOKORO_SPEED, max_chars: int | None
     if not text:
         raise ValueError("Texte vide")
 
+    # Troncature optionnelle si demandée (paramètre existant, désormais utilisé)
+    if max_chars is not None and len(text) > max_chars:
+        text = text[:max_chars].rstrip()
+
     # 2. Gestion rapide du cache
     key = cache_key or _audio_cache_key(text)
     cached = _get_cached_audio(key)
@@ -822,36 +864,40 @@ def text_to_speech(text: str, speed: float = KOKORO_SPEED, max_chars: int | None
         return cached
 
     # 3. Résolution des paramètres du modèle
-    lang      = _resolve_lang(langue)
-    voice     = _KOKORO_VOICE_MAP.get(lang, KOKORO_VOICE)
+    lang = _resolve_lang(langue)
+    voice = _KOKORO_VOICE_MAP.get(lang, KOKORO_VOICE)
     lang_code = _KOKORO_LANG_MAP.get(lang)
-
     t0 = time.time()
-    SEUIL_DECOUPAGE=150
-    # 4. Synthèse adaptative (Directe vs Découpée)
+
     print(f"[TTS] Génération {len(text)} chars, voice={voice}, lang={lang_code}, speed={speed}")
+
+    # 4. Synthèse adaptative (Directe vs Découpée + regroupée)
     if len(text) <= SEUIL_DECOUPAGE:
-        samples, sample_rate = _kokoro_model.create(text, voice=voice, speed=speed, lang=lang_code)
+        segments = [text]
     else:
-        # Découpage propre par ., ! ? et , (conserve la ponctuation attachée au morceau)
-        parts = [p.strip() for p in re.split(r'(?<=[.,!?])\s+', text) if p.strip()]
-        
-        all_s, sample_rate = [], None
-        for part in parts:
-            s, r = _kokoro_model.create(part, voice=voice, speed=speed, lang=lang_code)
-            all_s.append(s)
-            sample_rate = r
-            
-        samples = np.concatenate(all_s) if all_s else np.array([])
+        phrases = _decouper_phrases(text)
+        segments = _regrouper_segments(phrases, TAILLE_SEGMENT_CIBLE)
+
+    all_s, sample_rate = [], None
+    for seg in segments:
+        t_seg = time.time()
+        s, r = _kokoro_model.create(seg, voice=voice, speed=speed, lang=lang_code)
+        all_s.append(s)
+        sample_rate = r
+        # Log de debug par segment — utile pour repérer un segment anormalement lent.
+        # Commentez cette ligne si le volume de logs devient trop important en prod.
+        print(f"[TTS-seg] {len(seg)} chars en {time.time() - t_seg:.3f}s : {seg[:50]!r}")
+
+    samples = np.concatenate(all_s) if len(all_s) > 1 else all_s[0]
 
     # 5. Conversion et écriture directe du fichier
     audio_np = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16)
     wav_path = str(pathlib.Path(AUDIO_CACHE_DIR) / f"tts_{key}.wav")
-    
     _wav.write(wav_path, sample_rate, audio_np)
     _set_cached_audio(key, wav_path)
-    
-    print(f"[TTS] {len(text)} chars générés en {time.time()-t0:.2f}s {voice} {lang}")
+
+    print(f"[TTS] {len(text)} chars générés en {time.time() - t0:.2f}s "
+          f"({len(segments)} segment(s)) {voice} {lang}")
     return wav_path
 
 def _tts_safe(text: str, max_chars: int | None = None, cache_key: str | None = None, langue:str=None) -> str | None:
