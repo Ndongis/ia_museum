@@ -9,7 +9,7 @@ sentence-transformers
 faiss-cpu
 numpy
 scipy
-
+onnxruntime-gpu==1.20.1
 # LLM
 google-genai
 
