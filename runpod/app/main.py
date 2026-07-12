@@ -46,7 +46,6 @@ from contextlib import asynccontextmanager
 from functools import lru_cache
 from math import gcd
 import logging
-import onnxruntime as ort
 
 # Récupérer le logger d'uvicorn
 logger = logging.getLogger("uvicorn.error")
@@ -73,7 +72,6 @@ import torch
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
-os.environ["ONNX_PROVIDER"] = "CUDAExecutionProvider"
 GEMINI_API_KEY    = os.getenv("GEMINI_API_KEY",    "")
 GEMINI_MODEL      = os.getenv("GEMINI_MODEL",      "gemini-2.5-flash-lite")
 WHISPER_MODEL     = os.getenv("WHISPER_MODEL",     "medium")
@@ -108,6 +106,9 @@ _KOKORO_VOICE_MAP = {
     "es": os.getenv("KOKORO_VOICE_ES", "ef_dora"),
 }
 _KOKORO_LANG_MAP = {"fr": "fr-fr", "en": "en-us", "es": "es"}
+# Codes langue pour kokoro (PyTorch, KPipeline) — une lettre par langue,
+# différent du format "fr-fr" utilisé par l'ancien kokoro-onnx.
+_KOKORO_PT_LANG_CODE = {"fr": "f", "en": "a", "es": "e"}
 _KOKORO_ORIGINAL_LANG = {"fr": "francais", "en": "anglais", "es": "espagnol"}
 _SUPPORTED_LANGS = {"fr", "en", "es"}
 
@@ -118,10 +119,10 @@ _CORS_ORIGINS = [
     if o.strip()
 ]
 
-SYSTEM_PROMPT = """Tu es un guide expert et passionné de culture et d'art. Tu connais parfaitement les œuvres les artistes, les expositions et les institutions.
-Parle avec la langue que tu recevra dans la requete (ex: "fr"="francais", "en":"anglais", "es":"espagnol"), de façon naturelle, chaleureuse et engageante.
-Tu t'appuies uniquement sur les informations fournies dans le contexte.
-Faire la différence entre un oeuvre, un portrait et un document.
+SYSTEM_PROMPT = """Tu es un guide expert et passionné de culture et d'art. Tu connais parfaitement les œuvres, les artistes, les expositions et les institutions.
+Réponds dans la langue reçue dans la requête (ex: "fr"=français, "en"=anglais, "es"=espagnol), de façon naturelle, chaleureuse et engageante.
+Appuie-toi uniquement sur les informations fournies dans le contexte.
+Fais la différence entre une œuvre, un portrait et un document.
 Si une information n'est pas dans le contexte, dis-le honnêtement sans inventer.
 
 RÈGLES STRICTES sur le statut des biens — ne jamais enfreindre :
@@ -130,8 +131,10 @@ RÈGLES STRICTES sur le statut des biens — ne jamais enfreindre :
 2. Ne JAMAIS déduire qu'une œuvre est exposée parce qu'elle appartient à un artiste ou une institution.
 3. Ne JAMAIS inventer une relation salle/exposition absente du contexte.
 
-RÈGLE DE LONGUEUR — quel que soit le sujet : génére au maximum 150 charactéres.
-Ne coupe JAMAIS une phrase en plein milieu. Termine toujours correctement la dernière phrase."""
+RÈGLE DE LONGUEUR : réponds en 1 à 3 phrases courtes (environ 250 caractères maximum). Termine toujours ta dernière phrase correctement, quitte à dépasser légèrement cette longueur.
+
+Quand l'utilisateur te salue, salue-le en retour. Quand il te remercie, remercie-le aussi.
+"""
 
 EXPLAIN_SYSTEM_PROMPT = """Tu es un guide de musée expert, passionné et chaleureux.
 Un visiteur se trouve devant un bien culturel spécifique.
@@ -152,7 +155,7 @@ _metadata:       list[dict]            = []
 _cache_built_at: float                 = 0.0
 _answer_cache:   TTLCache              = None
 _audio_cache:    dict                  = {}
-_kokoro_model                          = None
+_kokoro_pipelines: dict                = {}
 _whisper_model                         = None
 data = None
 
@@ -651,10 +654,11 @@ def search_documents(question: str, top_k: int = 2):
 # ── Génération de réponse ─────────────────────────────────────────────────────
 
 def _build_prompt(question: str, results: list,
-                  salle_nom: str | None = None, exposition_nom: str | None = None, langue: str = None) -> str:
+                  salle_nom: str | None = None, exposition_nom: str | None = None, bien_titre: str | None = None, langue: str = None) -> str:
     location_parts = []
     if salle_nom:      location_parts.append(f"Salle actuelle : {salle_nom}")
     if exposition_nom: location_parts.append(f"Exposition en cours : {exposition_nom}")
+    
     location_block = ("Localisation du visiteur :\n" + "\n".join(location_parts) + "\n\n") if location_parts else ""
     
     print(f"[LANGUE] {langue}")
@@ -759,7 +763,7 @@ def generate_answer(question: str, results: list,
         return f"Erreur lors de la génération : {exc}"
 
 
-# ── TTS — Kokoro-ONNX ─────────────────────────────────────────────────────────
+# ── TTS — Kokoro (PyTorch) ────────────────────────────────────────────────────
 
 def _audio_cache_key(text: str) -> str:
     return hashlib.md5(text.strip().encode()).hexdigest()
@@ -784,25 +788,23 @@ def _set_cached_audio(key: str, wav_path: str) -> None:
 
 
 def kokoro_ready() -> bool:
-    return _kokoro_model is not None
+    return bool(_kokoro_pipelines)
 
 
 def _load_kokoro() -> None:
-    global _kokoro_model
-    from kokoro_onnx import Kokoro
-    model_path  = pathlib.Path(KOKORO_MODEL_DIR) / "kokoro-v1.0.fp16-gpu.onnx"
-    voices_path = pathlib.Path(KOKORO_MODEL_DIR) / "voices-v1.0.bin"
-    if not model_path.exists():
-        raise FileNotFoundError(f"Modèle introuvable : {model_path}")
-    print("[TTS] Chargement kokoro-onnx...")
+    global _kokoro_pipelines
+    from kokoro import KPipeline
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"[TTS] Chargement kokoro (PyTorch, device={device})...")
     t0 = time.time()
-    _kokoro_model = Kokoro(
-    model_path=str(model_path),
-    voices_path=str(voices_path),
-    
-)   
-    print(ort.get_available_providers())
-    print(f"[TTS] Kokoro-ONNX prêt en {time.time() - t0:.1f}s")
+    for lang, pt_lang_code in _KOKORO_PT_LANG_CODE.items():
+        _kokoro_pipelines[lang] = KPipeline(lang_code=pt_lang_code, device=device)
+    # Warm-up : évite de payer le coût du premier appel (recherche d'algo
+    # cuDNN, allocation mémoire) au moment où un vrai visiteur pose une question.
+    for lang, pipeline in _kokoro_pipelines.items():
+        voice = _KOKORO_VOICE_MAP.get(lang, KOKORO_VOICE)
+        list(pipeline("Test.", voice=voice, speed=1.0))
+    print(f"[TTS] Kokoro (PyTorch) prêt en {time.time() - t0:.1f}s")
 
 
 import re
@@ -827,7 +829,7 @@ def _decouper_phrases(text: str) -> list[str]:
 
 def _regrouper_segments(parts: list[str], taille_max: int = TAILLE_SEGMENT_CIBLE) -> list[str]:
     """Regroupe des phrases courtes ensemble pour minimiser le nombre d'appels
-    à _kokoro_model.create(), tout en respectant une taille max par appel."""
+    à pipeline(), tout en respectant une taille max par appel."""
     groupes: list[str] = []
     courant = ""
     for p in parts:
@@ -845,7 +847,7 @@ def _regrouper_segments(parts: list[str], taille_max: int = TAILLE_SEGMENT_CIBLE
 
 def text_to_speech(text: str, speed: float = KOKORO_SPEED, max_chars: int | None = None,
                     cache_key: str | None = None, langue: str | None = None) -> str:
-    if _kokoro_model is None:
+    if not _kokoro_pipelines:
         raise RuntimeError("Kokoro non initialisé")
 
     # 1. Nettoyage et normalisation immédiate du texte
@@ -866,10 +868,12 @@ def text_to_speech(text: str, speed: float = KOKORO_SPEED, max_chars: int | None
     # 3. Résolution des paramètres du modèle
     lang = _resolve_lang(langue)
     voice = _KOKORO_VOICE_MAP.get(lang, KOKORO_VOICE)
-    lang_code = _KOKORO_LANG_MAP.get(lang)
+    pipeline = _kokoro_pipelines.get(lang)
+    if pipeline is None:
+        raise RuntimeError(f"Kokoro non initialisé pour la langue : {lang}")
     t0 = time.time()
 
-    print(f"[TTS] Génération {len(text)} chars, voice={voice}, lang={lang_code}, speed={speed}")
+    print(f"[TTS] Génération {len(text)} chars, voice={voice}, lang={lang}, speed={speed}")
 
     # 4. Synthèse adaptative (Directe vs Découpée + regroupée)
     if len(text) <= SEUIL_DECOUPAGE:
@@ -878,12 +882,12 @@ def text_to_speech(text: str, speed: float = KOKORO_SPEED, max_chars: int | None
         phrases = _decouper_phrases(text)
         segments = _regrouper_segments(phrases, TAILLE_SEGMENT_CIBLE)
 
-    all_s, sample_rate = [], None
+    all_s, sample_rate = [], 24000  # sample rate fixe pour kokoro (PyTorch)
     for seg in segments:
         t_seg = time.time()
-        s, r = _kokoro_model.create(seg, voice=voice, speed=speed, lang=lang_code)
+        chunks = [audio for _graphemes, _phonemes, audio in pipeline(seg, voice=voice, speed=speed)]
+        s = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
         all_s.append(s)
-        sample_rate = r
         # Log de debug par segment — utile pour repérer un segment anormalement lent.
         # Commentez cette ligne si le volume de logs devient trop important en prod.
         print(f"[TTS-seg] {len(seg)} chars en {time.time() - t_seg:.3f}s : {seg[:50]!r}")
@@ -1124,7 +1128,7 @@ def initialize() -> None:
     _answer_cache = TTLCache(maxsize=ANSWER_CACHE_SIZE, ttl=ANSWER_CACHE_TTL)
     print(f"  Cache : {ANSWER_CACHE_SIZE} entrées / {ANSWER_CACHE_TTL}s TTL")
 
-    print("=== STEP 5 : chargement Kokoro-ONNX ===")
+    print("=== STEP 5 : chargement Kokoro (PyTorch) ===")
     try:
         _load_kokoro()
     except Exception as e:
@@ -1304,6 +1308,8 @@ async def stt_query_tts(
     print(f"[STT-QUERY-TTS] Transcription audio ({len(audio_bytes)} bytes)...")
     try:
         question = _transcribe(audio_bytes, audio.content_type or "audio/wav",langue=langue)
+        if bien_titre:
+            question = f"{question} (Focus toi sur ce bien culturel : {bien_titre})"
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Erreur STT : {exc}")
 
