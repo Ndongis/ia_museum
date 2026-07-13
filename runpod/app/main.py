@@ -607,7 +607,7 @@ def build_embeddings() -> None:
 def embed_question(question):
     return _model.encode(question).tolist()
 
-def search_documents(question: str, top_k: int = 2):
+def search_documents(question: str, top_k: int = 5):
     global cur, conn
     question_embedding = embed_question(question)
     
