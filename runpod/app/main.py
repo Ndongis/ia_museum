@@ -74,7 +74,7 @@ import torch
 # ── Config ────────────────────────────────────────────────────────────────────
 GEMINI_API_KEY    = os.getenv("GEMINI_API_KEY",    "")
 GEMINI_MODEL      = os.getenv("GEMINI_MODEL",      "gemini-2.5-flash-lite")
-WHISPER_MODEL     = os.getenv("WHISPER_MODEL",     "large-v2")
+WHISPER_MODEL     = os.getenv("WHISPER_MODEL",     "medium")
 WHISPER_DEVICE    = os.getenv("WHISPER_DEVICE",    "cuda")
 WHISPER_COMPUTE   = os.getenv("WHISPER_COMPUTE",   "float16")
 KOKORO_VOICE      = os.getenv("KOKORO_VOICE",      "ff_siwis")
@@ -649,6 +649,27 @@ def search_documents(question: str, top_k: int = 2):
             conn.rollback()
         return []
 
+
+
+def get_rag_documents() -> list[str]:
+    """Récupère le contenu texte (`content`) de tous les documents RAG,
+    sans passer par l'embedding/similarité (contrairement à search_documents)."""
+    global cur, conn
+    if cur is None:
+        return []
+    try:
+        conn.rollback()
+        cur.execute("""
+            SELECT content FROM rag_documents;
+        """)
+        lignes = cur.fetchall()
+        # 'ligne' est un tuple, le contenu est le premier élément (index 0)
+        return [ligne[0] for ligne in lignes]
+    except Exception as exc:
+        print(f"❌ Erreur pgvector (get_rag_documents) : {exc}")
+        if conn:
+            conn.rollback()
+        return []
 
 
 # ── Génération de réponse ─────────────────────────────────────────────────────
@@ -1343,6 +1364,22 @@ def tts(req: TTSRequest):
                             media_type="audio/wav", filename="tts.wav")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Erreur TTS : {exc}")
+
+
+@api.get("/text_rag")
+async def text_rag():
+    """Retourne le contenu texte brut de tous les documents indexés dans rag_documents."""
+    if cur is None:
+        raise HTTPException(status_code=503, detail="Base de données non connectée.")
+    try:
+        documents = get_rag_documents()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Erreur RAG : {exc}")
+
+    return {
+        "count": len(documents),
+        "documents": documents,
+    }
 
 
 @api.post("/explain")
