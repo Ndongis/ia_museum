@@ -885,7 +885,10 @@ def text_to_speech(text: str, speed: float = KOKORO_SPEED, max_chars: int | None
     all_s, sample_rate = [], 24000  # sample rate fixe pour kokoro (PyTorch)
     for seg in segments:
         t_seg = time.time()
-        chunks = [audio for _graphemes, _phonemes, audio in pipeline(seg, voice=voice, speed=speed)]
+        chunks = [
+            audio.detach().cpu().numpy() if hasattr(audio, "detach") else audio
+            for _graphemes, _phonemes, audio in pipeline(seg, voice=voice, speed=speed)
+        ]
         s = np.concatenate(chunks) if len(chunks) > 1 else chunks[0]
         all_s.append(s)
         # Log de debug par segment — utile pour repérer un segment anormalement lent.
