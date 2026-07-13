@@ -718,7 +718,7 @@ def _build_prompt(question: str, results: list,
             context_parts.append(f"[{r_type}] {r_titre}\n{content_brut}")
 
     context = "\n\n---\n\n".join(context_parts)
-    
+    print(f"[Context] {context}")
     return f"{SYSTEM_PROMPT}\n\n{location_block}Contexte :\n{context}\n\nQuestion : {question}. Générer avec la langue {langue}"
 
 
@@ -1307,7 +1307,7 @@ async def stt(audio: UploadFile = File(...)):
 @api.post("/stt-query-tts")
 async def stt_query_tts(
     audio: UploadFile = File(...),
-    top_k: int = 3,
+    top_k: int = 4,
     salle_nom: str | None = None,
     exposition_nom: str | None = None,
     bien_titre: str | None = None,
