@@ -74,7 +74,7 @@ import torch
 # ── Config ────────────────────────────────────────────────────────────────────
 GEMINI_API_KEY    = os.getenv("GEMINI_API_KEY",    "")
 GEMINI_MODEL      = os.getenv("GEMINI_MODEL",      "gemini-2.5-flash-lite")
-WHISPER_MODEL     = os.getenv("WHISPER_MODEL",     "medium")
+WHISPER_MODEL     = os.getenv("WHISPER_MODEL",     "large-v2")
 WHISPER_DEVICE    = os.getenv("WHISPER_DEVICE",    "cuda")
 WHISPER_COMPUTE   = os.getenv("WHISPER_COMPUTE",   "float16")
 KOKORO_VOICE      = os.getenv("KOKORO_VOICE",      "ff_siwis")
