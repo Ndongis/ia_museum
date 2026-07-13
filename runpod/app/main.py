@@ -675,7 +675,7 @@ def get_rag_documents() -> list[str]:
 # ── Génération de réponse ─────────────────────────────────────────────────────
 
 def _build_prompt(question: str, results: list,
-                  salle_nom: str | None = None, exposition_nom: str | None = None, bien_titre: str | None = None, langue: str = None) -> str:
+                  salle_nom: str | None = None, exposition_nom: str | None = None, langue: str = None) -> str:
     location_parts = []
     if salle_nom:      location_parts.append(f"Salle actuelle : {salle_nom}")
     if exposition_nom: location_parts.append(f"Exposition en cours : {exposition_nom}")
@@ -751,7 +751,7 @@ def generate_answer(question: str, results: list,
         langue_resolue = _KOKORO_ORIGINAL_LANG.get(langue_str, "francais")
         print(f"[Génération] Question : {question[:50]} | Langue : {langue_resolue}")
         # Construction sécurisée du prompt
-        prompt_complet = _build_prompt(question, results, salle_nom, exposition_nom, langue_resolue)
+        prompt_complet = _build_prompt(question, results, salle_nom, exposition_nom, langue=langue_resolue)
         
         print(f"[AVANT GEN]...")  # Affiche les 200 premiers caractères du prompt
         # Requête à l'API Gemini
