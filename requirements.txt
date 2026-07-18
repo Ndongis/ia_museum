@@ -14,7 +14,7 @@ google-genai
 
 # STT
 faster-whisper
-
+kokoro
 
 # HTTP + Cache
 httpx
