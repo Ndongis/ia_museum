@@ -32,7 +32,6 @@ Variables d'environnement :
 import hashlib
 from http import client
 import io
-from collections import deque
 import json
 from logging import config
 import os
@@ -134,7 +133,7 @@ RÈGLES STRICTES sur le statut des biens — ne jamais enfreindre :
 
 RÈGLE DE LONGUEUR : réponds en 1 à 3 phrases courtes (environ 250 caractères maximum). Termine toujours ta dernière phrase correctement, quitte à dépasser légèrement cette longueur.
 
-Un historique des échanges précédents peut t'être fourni pour garder le fil de la conversation. Si c'est le cas, ne salue PAS de nouveau (pas de "bonjour", "bonsoir", etc.) : réponds directement à la question, comme dans une conversation déjà entamée. Salue uniquement s'il n'y a aucun historique fourni (première question de la visite) et que l'utilisateur te salue lui-même.
+Quand l'utilisateur te salue, salue-le en retour. Quand il te remercie, remercie-le aussi.
 """
 
 EXPLAIN_SYSTEM_PROMPT = """Tu es un guide de musée expert, passionné et chaleureux.
@@ -155,11 +154,6 @@ _embeddings:     np.ndarray            = None
 _metadata:       list[dict]            = []
 _cache_built_at: float                 = 0.0
 _answer_cache:   TTLCache              = None
-# Historique des 3 derniers échanges (question, réponse) par visiteur (guest_id),
-# pour donner du contexte de conversation à Gemini sans mélanger les visiteurs
-# entre eux. TTL/taille alignés sur ANSWER_CACHE_TTL/SIZE (initialisé au démarrage).
-_conversation_histories: TTLCache     = None
-HISTORY_MAXLEN = 3
 _audio_cache:    dict                  = {}
 _kokoro_pipelines: dict                = {}
 _whisper_model                         = None
@@ -680,53 +674,18 @@ def get_rag_documents() -> list[str]:
 
 # ── Génération de réponse ─────────────────────────────────────────────────────
 
-def _get_history(guest_id: str | None) -> deque:
-    """Retourne (en la créant si besoin) le deque d'historique pour ce visiteur."""
-    if not guest_id or _conversation_histories is None:
-        return deque(maxlen=HISTORY_MAXLEN)
-    hist = _conversation_histories.get(guest_id)
-    if hist is None:
-        hist = deque(maxlen=HISTORY_MAXLEN)
-        _conversation_histories[guest_id] = hist
-    return hist
-
-
-def _append_history(guest_id: str | None, question: str, answer: str) -> None:
-    """Ajoute l'échange (question, réponse) à l'historique de ce visiteur."""
-    if not guest_id or _conversation_histories is None:
-        return
-    hist = _get_history(guest_id)
-    hist.append((question, answer))
-    # Ré-affecter pour rafraîchir le TTL de cette entrée dans le TTLCache
-    _conversation_histories[guest_id] = hist
-
-
-def _build_history_block(guest_id: str | None) -> str:
-    """Formate les 3 derniers échanges du visiteur pour les insérer dans le
-    prompt, afin que Gemini garde le fil de la conversation."""
-    hist = _get_history(guest_id)
-    if not hist:
-        return ""
-    tours = [f"Visiteur : {q}\nGuide : {a}" for q, a in hist]
-    return "Historique de la conversation (derniers échanges) :\n" + "\n\n".join(tours) + "\n\n"
-
-
 def _build_prompt(question: str, results: list,
-                  salle_nom: str | None = None, exposition_nom: str | None = None,
-                  institution_nom: str | None = None, langue: str = None,
-                  guest_id: str | None = None) -> str:
+                  salle_nom: str | None = None, exposition_nom: str | None = None, langue: str = None) -> str:
     location_parts = []
-    if salle_nom:        location_parts.append(f"Salle actuelle : {salle_nom}")
-    if exposition_nom:   location_parts.append(f"Exposition en cours : {exposition_nom}")
-    if institution_nom:  location_parts.append(f"Institution : {institution_nom}")
+    if salle_nom:      location_parts.append(f"Salle actuelle : {salle_nom}")
+    if exposition_nom: location_parts.append(f"Exposition en cours : {exposition_nom}")
     
     location_block = ("Localisation du visiteur :\n" + "\n".join(location_parts) + "\n\n") if location_parts else ""
-    history_block = _build_history_block(guest_id)
     
     print(f"[LANGUE] {langue}")
     
     if not results:
-        return f"{SYSTEM_PROMPT}\n\n{location_block}{history_block}Aucun document.\n\nQuestion : {question}. Générer avec langue {langue}"
+        return f"{SYSTEM_PROMPT}\n\n{location_block}Aucun document.\n\nQuestion : {question}. Générer avec langue {langue}"
 
     # ── CONSTRUCTION SÉCURISÉE DU CONTEXTE (Accepte les dictionnaires et les tuples bruts) ──
     context_parts = []
@@ -760,13 +719,12 @@ def _build_prompt(question: str, results: list,
 
     context = "\n\n---\n\n".join(context_parts)
     print(f"[Context] {context}")
-    return f"{SYSTEM_PROMPT}\n\n{location_block}{history_block}Contexte :\n{context}\n\nQuestion : {question}. Générer avec la langue {langue}"
+    return f"{SYSTEM_PROMPT}\n\n{location_block}Contexte :\n{context}\n\nQuestion : {question}. Générer avec la langue {langue}"
 
 
 def generate_answer(question: str, results: list,
                     salle_nom: str | None = None, exposition_nom: str | None = None,
-                    institution_nom: str | None = None,
-                    langue: str | None = None, guest_id: str | None = None) -> str:
+                    langue: str | None = None) -> str:
     if not _llm:
         return "Le modèle IA n'est pas configuré (GEMINI_API_KEY manquante)."
 
@@ -778,10 +736,8 @@ def generate_answer(question: str, results: list,
             cache_parts.append(str(r.get('contenu', r.get('content', '')))[:30])
         elif isinstance(r, (tuple, list)) and len(r) > 0:
             cache_parts.append(str(r[0])[:30])
-
-    # guest_id inclus dans la clé : une même question ne doit pas retourner une
-    # réponse mise en cache pour un autre visiteur ayant un historique différent.
-    cache_key = f"{question}_{salle_nom}_{exposition_nom}_{institution_nom}_{langue}_{guest_id}_{'|'.join(cache_parts)}"
+            
+    cache_key = f"{question}_{salle_nom}_{exposition_nom}_{langue}_{'|'.join(cache_parts)}"
     
     # ── 2. Vérification du cache ──
     if _answer_cache is not None and cache_key in _answer_cache:
@@ -793,9 +749,9 @@ def generate_answer(question: str, results: list,
         # Nettoyage et récupération de la langue cible
         langue_str = str(langue).strip().lower() if langue else "fr"
         langue_resolue = _KOKORO_ORIGINAL_LANG.get(langue_str, "francais")
-        print(f"[Génération] Question : {question[:50]} | Langue : {langue_resolue} | Visiteur : {guest_id}")
+        print(f"[Génération] Question : {question[:50]} | Langue : {langue_resolue}")
         # Construction sécurisée du prompt
-        prompt_complet = _build_prompt(question, results, salle_nom, exposition_nom, institution_nom, langue=langue_resolue, guest_id=guest_id)
+        prompt_complet = _build_prompt(question, results, salle_nom, exposition_nom, langue=langue_resolue)
         
         print(f"[AVANT GEN]...")  # Affiche les 200 premiers caractères du prompt
         # Requête à l'API Gemini
@@ -820,10 +776,7 @@ def generate_answer(question: str, results: list,
         # Sauvegarde dans le cache
         if _answer_cache is not None:
             _answer_cache[cache_key] = answer
-
-        # Ajout à l'historique des 3 derniers échanges de ce visiteur
-        _append_history(guest_id, question, answer)
-
+            
         return answer
         
     except Exception as exc:
@@ -1170,7 +1123,7 @@ def _create_table_documents():
 # ── Initialisation ────────────────────────────────────────────────────────────
 
 def initialize() -> None:
-    global _model, _llm, _answer_cache, conn, cur, _conversation_histories
+    global _model, _llm, _answer_cache, conn, cur
 
     conn = psycopg2.connect(DATABASE_URL)
     cur = conn.cursor()
@@ -1198,9 +1151,6 @@ def initialize() -> None:
     print("=== STEP 4 : cache réponses ===")
     _answer_cache = TTLCache(maxsize=ANSWER_CACHE_SIZE, ttl=ANSWER_CACHE_TTL)
     print(f"  Cache : {ANSWER_CACHE_SIZE} entrées / {ANSWER_CACHE_TTL}s TTL")
-
-    _conversation_histories = TTLCache(maxsize=ANSWER_CACHE_SIZE, ttl=ANSWER_CACHE_TTL)
-    print(f"  Historiques par visiteur : {ANSWER_CACHE_SIZE} entrées / {ANSWER_CACHE_TTL}s TTL")
 
     print("=== STEP 5 : chargement Kokoro (PyTorch) ===")
     try:
@@ -1241,12 +1191,11 @@ api.add_middleware(
 # ── Schémas Pydantic ──────────────────────────────────────────────────────────
 
 class QueryRequest(BaseModel):
-    question:        str
-    top_k:           int = 3
-    salle_nom:       str | None = None
-    exposition_nom:  str | None = None
-    institution_nom: str | None = None
-    langue:          str | None = None
+    question:       str
+    top_k:          int = 3
+    salle_nom:      str | None = None
+    exposition_nom: str | None = None
+    langue:         str | None = None
 
 
 class TTSRequest(BaseModel):
@@ -1255,12 +1204,11 @@ class TTSRequest(BaseModel):
 
 
 class ExplainRequest(BaseModel):
-    bien_titre:      str
-    salle_nom:       str | None = None
-    exposition_nom:  str | None = None
-    institution_nom: str | None = None
-    top_k:           int = 5
-    langue:          str = "fr"
+    bien_titre:     str
+    salle_nom:      str | None = None
+    exposition_nom: str | None = None
+    top_k:          int = 5
+    langue:         str = "fr"
 
 
 
@@ -1295,7 +1243,7 @@ def query(req: QueryRequest):
     logger.info(f"langue {req.langue}")
     results = search_documents(req.question, req.top_k)
     print(f"[QUERY] {req.question} → {len(results)} résultats")
-    answer  = generate_answer(req.question, results, req.salle_nom, req.exposition_nom, req.institution_nom, req.langue)
+    answer  = generate_answer(req.question, results, req.salle_nom, req.exposition_nom, req.langue)
     print(f"[QUERY_REPONSE] Réponse : {answer[:100]}...")
     formatted_sources = []
     for r in results:
@@ -1358,21 +1306,14 @@ async def stt(audio: UploadFile = File(...)):
 
 @api.post("/stt-query-tts")
 async def stt_query_tts(
-    request: Request,
     audio: UploadFile = File(...),
     top_k: int = 4,
     salle_nom: str | None = None,
     exposition_nom: str | None = None,
-    institution_nom: str | None = None,
     bien_titre: str | None = None,
     langue: str | None = None,
-    guest_id: str | None = None,
 ):
-    # Priorité au paramètre explicite (envoyé par Unity) ; repli sur un cookie
-    # si jamais un autre client (ex: app web) en envoie un à la place.
-    guest_id = guest_id or request.cookies.get("guest_id")
-    print(f"[Guest Id] {guest_id}")
-    print(f"[STT-QUERY-TTS] salle={salle_nom} expo={exposition_nom} institution={institution_nom} bien={bien_titre} top_k={top_k} langue={langue} guest_id={guest_id}")
+    print(f"[STT-QUERY-TTS] salle={salle_nom} expo={exposition_nom} bien={bien_titre} top_k={top_k} langue={langue}")
     lang        = _resolve_lang(langue)
     audio_bytes = await audio.read()
     if not audio_bytes:
@@ -1386,7 +1327,7 @@ async def stt_query_tts(
                             headers={"X-Question": question, "X-Answer-Text": _safe_header(text),
                                      "Access-Control-Expose-Headers": "X-Question, X-Answer-Text"})
 
-    if not salle_nom and not exposition_nom and not institution_nom:
+    if not salle_nom and not exposition_nom:
         return _wav_response("Vous n'etes pas encore dans une salle d'exposition. Veuillez vous deplacer vers une salle.")
     print(f"[STT-QUERY-TTS] Transcription audio ({len(audio_bytes)} bytes)...")
     try:
@@ -1401,10 +1342,10 @@ async def stt_query_tts(
 
     t0 = time.time(); results = search_documents(question, top_k)
     print(f"[PERF] RAG    : {(time.time()-t0)*1000:.0f}ms")
-    t0 = time.time(); answer = generate_answer(question, results, salle_nom, exposition_nom, institution_nom, lang, guest_id=guest_id)
+    t0 = time.time(); answer = generate_answer(question, results, salle_nom, exposition_nom, lang)
     print(f"[PERF] Gemini : {(time.time()-t0)*1000:.0f}ms")
     t0 = time.time(); wav_path = text_to_speech(answer, langue=lang)
-    print(f"[PERF] TTS    : {(time.time()-t0)*1000:.0f}ms {langue} {lang} {exposition_nom} {institution_nom} {answer}")
+    print(f"[PERF] TTS    : {(time.time()-t0)*1000:.0f}ms {langue} {lang} {exposition_nom} {answer}")
 
     return FileResponse(wav_path, media_type="audio/wav", filename="response.wav",
                         headers={"X-Question": _safe_header(question, 200),
@@ -1454,10 +1395,9 @@ async def explain(req: ExplainRequest):
     results  = search_documents(question, req.top_k)
 
     location_parts = []
-    if req.salle_nom:       location_parts.append(f"Salle : {req.salle_nom}")
-    if req.exposition_nom:  location_parts.append(f"Exposition : {req.exposition_nom}")
-    if req.institution_nom: location_parts.append(f"Institution : {req.institution_nom}")
-    if req.langue:          location_parts.append(f"Langue : {req.langue}")
+    if req.salle_nom:      location_parts.append(f"Salle : {req.salle_nom}")
+    if req.exposition_nom: location_parts.append(f"Exposition : {req.exposition_nom}")
+    if req.langue:         location_parts.append(f"Langue : {req.langue}")
     location_block = ("Contexte de visite :\n" + "\n".join(location_parts) + "\n\n") if location_parts else ""
 
     context = "\n\n---\n\n".join(
@@ -1472,7 +1412,7 @@ async def explain(req: ExplainRequest):
         f"son historique, sa technique et son sujet en 3 phrases."
     )
 
-    explain_key = f"expl_{_audio_cache_key(req.bien_titre + str(req.salle_nom) + str(req.exposition_nom) + str(req.institution_nom) + str(req.langue))}"
+    explain_key = f"expl_{_audio_cache_key(req.bien_titre + str(req.salle_nom) + str(req.exposition_nom) + str(req.langue))}"
 
     # Cache audio complet
     cached_wav = _get_cached_audio(explain_key)
