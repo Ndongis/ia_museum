@@ -140,6 +140,7 @@ Un historique des échanges précédents peut t'être fourni pour garder le fil 
 EXPLAIN_SYSTEM_PROMPT = """Tu es un guide de musée expert, passionné et chaleureux.
 Un visiteur se trouve devant un bien culturel spécifique.
 Explique ce bien de façon naturelle, engageante et accessible.
+Ne dites pas bonjour, commencer par vous vous trouvez devant ou quel chose dans le genre.
 Appuie-toi uniquement sur les informations du contexte fourni.
 Si une information manque, dis-le honnêtement sans inventer.
 Parle avec la langue que tu recevra dans la requete (ex: "fr", "en", "es").
@@ -1454,10 +1455,12 @@ async def explain(req: ExplainRequest):
     results  = search_documents(question, req.top_k)
 
     location_parts = []
+    """
     if req.salle_nom:       location_parts.append(f"Salle : {req.salle_nom}")
     if req.exposition_nom:  location_parts.append(f"Exposition : {req.exposition_nom}")
     if req.institution_nom: location_parts.append(f"Institution : {req.institution_nom}")
     if req.langue:          location_parts.append(f"Langue : {req.langue}")
+    """
     location_block = ("Contexte de visite :\n" + "\n".join(location_parts) + "\n\n") if location_parts else ""
 
     context = "\n\n---\n\n".join(
@@ -1471,7 +1474,7 @@ async def explain(req: ExplainRequest):
         f"Donne une explication naturelle et engageante en t'appuyant sur sa description, "
         f"son historique, sa technique et son sujet en 3 phrases."
     )
-
+    print(f"[PROMPT] {prompt}")
     explain_key = f"expl_{_audio_cache_key(req.bien_titre + str(req.salle_nom) + str(req.exposition_nom) + str(req.institution_nom) + str(req.langue))}"
 
     # Cache audio complet
