@@ -736,7 +736,7 @@ def _build_prompt(question: str, results: list,
     print(f"[LANGUE] {langue}")
     
     if not results:
-        return f"{SYSTEM_PROMPT}\n\n{location_block}{history_block}Aucun document.\n\nQuestion : {question}. Langue de generation du texte {langue}"
+        return f"{SYSTEM_PROMPT}\n\n{location_block}{history_block}Aucun document.\n\nQuestion : {question}. Langue de generation du texte : {langue}"
 
     # ── CONSTRUCTION SÉCURISÉE DU CONTEXTE (Accepte les dictionnaires et les tuples bruts) ──
     context_parts = []
@@ -770,7 +770,7 @@ def _build_prompt(question: str, results: list,
 
     context = "\n\n---\n\n".join(context_parts)
     print(f"[Context] {context}")
-    return f"{SYSTEM_PROMPT}\n\n{location_block}{history_block}Contexte :\n{context}\n\nQuestion : {question}.  Langue de generation du texte {langue}"
+    return f"{SYSTEM_PROMPT}\n\n{location_block}{history_block}Contexte :\n{context}\n\nQuestion : {question}.  Langue de generation du texte : {langue}"
 
 
 def generate_answer(question: str, results: list,
