@@ -715,9 +715,11 @@ def _build_history_block(guest_id: str | None) -> str:
     """Formate les 3 derniers échanges du visiteur pour les insérer dans le
     prompt, afin que Gemini garde le fil de la conversation."""
     hist = _get_history(guest_id)
+    print(f"[HISTORIQUE] : Guide : hist")
     if not hist:
         return ""
     tours = [f"Visiteur : {q}\nGuide : {a}" for q, a in hist]
+    print(f"[HISTORIQUE] : {q}\nGuide : {a}" for q, a in hist)
     return "Historique de la conversation (derniers échanges) :\n" + "\n\n".join(tours) + "\n\n"
 
 
@@ -1468,10 +1470,12 @@ async def stt_query_tts(
     print(f"[STT-QUERY-TTS] Transcription audio ({len(audio_bytes)} bytes)...")
     try:
         question = _transcribe(audio_bytes, audio.content_type or "audio/wav",langue=langue)
-        if bien_titre:
-            question = f"{question} (Focus toi sur ce bien culturel : {bien_titre})"
+        
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Erreur STT : {exc}")
+
+    if bien_titre:
+                question = f"{question} (Focus toi sur ce bien culturel : {bien_titre})"
 
     if not question or question.strip().lower() in {"", "[inaudible]", "[silence]"} or len(question.strip()) < 3:
         return _wav_response("Je n'ai pas entendu votre question. Pouvez-vous repeter ?",langue=langue)
