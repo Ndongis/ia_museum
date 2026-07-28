@@ -770,7 +770,7 @@ def _build_prompt(question: str, results: list,
 
     context = "\n\n---\n\n".join(context_parts)
     print(f"[Context] {context}")
-    return f"{SYSTEM_PROMPT}\n\n{location_block}{history_block}Contexte :\n{context}\n\nQuestion : {question}.  Langue de generation du texte : {langue}"
+    return f"{SYSTEM_PROMPT}\n\n{location_block}{history_block}Contexte :\n{context}\n\nQuestion : {question}.  Répondez avec langue : {langue}"
 
 
 def generate_answer(question: str, results: list,
@@ -816,7 +816,7 @@ def generate_answer(question: str, results: list,
         temperature=0.2,
         max_output_tokens=500,
         thinking_config=types.ThinkingConfig(
-            thinking_budget=0
+            thinking_budget=2
             ),
         ),
         )
