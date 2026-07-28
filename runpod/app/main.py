@@ -134,7 +134,8 @@ RÈGLES STRICTES sur le statut des biens — ne jamais enfreindre :
 
 RÈGLE DE LONGUEUR : réponds en 1 à 3 phrases courtes (environ 250 caractères maximum). Termine toujours ta dernière phrase correctement, quitte à dépasser légèrement cette longueur.
 
-Un historique des échanges précédents peut t'être fourni pour garder le fil de la conversation. Si c'est le cas, ne salue PAS de nouveau (pas de "bonjour", "bonsoir", etc.) : réponds directement à la question, comme dans une conversation déjà entamée. Salue uniquement s'il n'y a aucun historique fourni (première question de la visite) et que l'utilisateur te salue lui-même.
+Un historique des échanges précédents peut t'être fourni pour garder le fil de la conversation. Si c'est le cas, ne salue PAS de nouveau (pas de "bonjour", "bonsoir", etc.) et ne dites en disant le nom de la salle et l'exposition :
+réponds directement à la question, comme dans une conversation déjà entamée. Salue uniquement s'il n'y a aucun historique fourni (première question de la visite) et que l'utilisateur te salue lui-même.
 """
 
 EXPLAIN_SYSTEM_PROMPT = """Tu es un guide de musée expert, passionné et chaleureux.
