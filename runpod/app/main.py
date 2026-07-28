@@ -734,7 +734,7 @@ def _build_prompt(question: str, results: list,
     
     location_block = ("Localisation du visiteur :\n" + "\n".join(location_parts) + "\n\n") if location_parts else ""
     history_block = _build_history_block(guest_id)
-    
+    print(f"[HISTORY_BLOCK]{history_block}")
     print(f"[LANGUE] {langue}")
     
     if not results:
