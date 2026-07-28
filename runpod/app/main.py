@@ -121,7 +121,7 @@ _CORS_ORIGINS = [
 ]
 
 SYSTEM_PROMPT = """Tu es un guide expert et passionné de culture et d'art. Tu connais parfaitement les œuvres, les artistes, les expositions et les institutions.
-Réponds dans la langue reçue dans la requête (ex: "fr"=français, "en"=anglais, "es"=espagnol), de façon naturelle, chaleureuse et engageante.
+Réponds dans la langue reçue de façon naturelle, chaleureuse et engageante.
 Appuie-toi uniquement sur les informations fournies dans le contexte.
 Fais la différence entre une œuvre, un portrait et un document.
 Si une information n'est pas dans le contexte, dis-le honnêtement sans inventer.
@@ -148,6 +148,12 @@ Parle avec la langue que tu recevra dans la requete (ex: "fr", "en", "es").
 RÈGLE DE LONGUEUR : génére au maximum 150 caractéres
 Ne coupe JAMAIS une phrase en plein milieu."""
 
+CREATE_CREATIONS_PROMPT="""Tu es un guide expert et passionné de culture et d'art. Tu connais parfaitement les œuvres, les artistes, les expositions et les institutions.
+À partir de la question précédente du visiteur (et de la réponse donnée si elle est fournie), propose EXACTEMENT 2 nouvelles questions pertinentes, courtes et naturelles que le visiteur pourrait poser ensuite pour aller plus loin.
+Réponds dans la même langue que celle reçue dans la requête.
+Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte avant ni après, sans balises Markdown, au format exact suivant :
+{"questions": ["Première question ?", "Deuxième question ?"]}
+"""
 # ── État global ───────────────────────────────────────────────────────────────
 
 _model:          SentenceTransformer   = None
@@ -159,8 +165,10 @@ _cache_built_at: float                 = 0.0
 _answer_cache:   TTLCache              = None
 # Historique des 3 derniers échanges (question, réponse) par visiteur (guest_id),
 # pour donner du contexte de conversation à Gemini sans mélanger les visiteurs
-# entre eux. TTL/taille alignés sur ANSWER_CACHE_TTL/SIZE (initialisé au démarrage).
-_conversation_histories: TTLCache     = None
+# entre eux. Durée de validité illimitée (pas de TTL, simple dict) : l'historique
+# d'un visiteur n'expire jamais et n'est jamais purgé automatiquement tant que
+# le serveur tourne (redémarrage = remise à zéro puisque tout est en mémoire).
+_conversation_histories: dict         = None
 HISTORY_MAXLEN = 3
 _audio_cache:    dict                  = {}
 _kokoro_pipelines: dict                = {}
@@ -728,7 +736,7 @@ def _build_prompt(question: str, results: list,
     print(f"[LANGUE] {langue}")
     
     if not results:
-        return f"{SYSTEM_PROMPT}\n\n{location_block}{history_block}Aucun document.\n\nQuestion : {question}. Générer avec langue {langue}"
+        return f"{SYSTEM_PROMPT}\n\n{location_block}{history_block}Aucun document.\n\nQuestion : {question}. Langue de generation du texte {langue}"
 
     # ── CONSTRUCTION SÉCURISÉE DU CONTEXTE (Accepte les dictionnaires et les tuples bruts) ──
     context_parts = []
@@ -831,6 +839,51 @@ def generate_answer(question: str, results: list,
     except Exception as exc:
         print(f"❌ ERROR Gemini : {exc}")
         return f"Erreur lors de la génération : {exc}"
+
+
+def generate_suggested_questions(question: str, answer: str | None = None,
+                                  langue: str | None = None) -> list[str]:
+    """Génère 2 questions de suivi à partir de la question précédente (et de sa
+    réponse si fournie), en s'appuyant sur CREATE_CREATIONS_PROMPT. Renvoie une
+    liste de 0 à 2 chaînes ; liste vide en cas d'échec (LLM absent, JSON invalide, etc.)."""
+    if not _llm:
+        return []
+
+    langue_str = str(langue).strip().lower() if langue else "fr"
+    langue_resolue = _KOKORO_ORIGINAL_LANG.get(langue_str, "francais")
+
+    contexte = f"Question précédente du visiteur : {question}"
+    if answer:
+        contexte += f"\nRéponse donnée au visiteur : {answer}"
+
+    prompt = f"{CREATE_CREATIONS_PROMPT}\n\n{contexte}\n\nLangue attendue : {langue_resolue}"
+
+    try:
+        response = _llm.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.4,
+                max_output_tokens=200,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                response_mime_type="application/json",
+            ),
+        )
+        raw = response.text if response and hasattr(response, "text") and response.text else "{}"
+        raw = raw.strip()
+        # Sécurité : au cas où le modèle entourerait quand même la réponse de ```json ... ```
+        raw = re.sub(r"^```(json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+
+        data = json.loads(raw)
+        questions = data.get("questions", [])
+        if not isinstance(questions, list):
+            return []
+        # On force la sortie à 2 questions maximum, sous forme de chaînes propres
+        return [str(q).strip() for q in questions[:2] if str(q).strip()]
+
+    except Exception as exc:
+        print(f"❌ ERROR generate_suggested_questions : {exc}")
+        return []
 
 
 # ── TTS — Kokoro (PyTorch) ────────────────────────────────────────────────────
@@ -1201,8 +1254,8 @@ def initialize() -> None:
     _answer_cache = TTLCache(maxsize=ANSWER_CACHE_SIZE, ttl=ANSWER_CACHE_TTL)
     print(f"  Cache : {ANSWER_CACHE_SIZE} entrées / {ANSWER_CACHE_TTL}s TTL")
 
-    _conversation_histories = TTLCache(maxsize=ANSWER_CACHE_SIZE, ttl=ANSWER_CACHE_TTL)
-    print(f"  Historiques par visiteur : {ANSWER_CACHE_SIZE} entrées / {ANSWER_CACHE_TTL}s TTL")
+    _conversation_histories = {}
+    print("  Historiques par visiteur : illimités (pas de TTL, dict en mémoire)")
 
     print("=== STEP 5 : chargement Kokoro (PyTorch) ===")
     try:
@@ -1356,6 +1409,28 @@ async def stt(audio: UploadFile = File(...)):
         return {"transcription": _transcribe(audio_bytes, audio.content_type or "audio/wav")}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Erreur STT : {exc}")
+
+@api.post("/build_question")
+async def build_questions(request: Request,
+    salle_nom: str | None = None,
+    exposition_nom: str | None = None,
+    institution_nom: str | None = None,
+    bien_titre: str | None = None,
+    langue: str | None = None,
+    guest_id: str | None = None):
+    """Construit 2 questions de suivi (au format JSON) à partir de la dernière
+    question/réponse du visiteur, retrouvée dans son historique de conversation."""
+    guest_id = guest_id or request.cookies.get("guest_id")
+    lang     = _resolve_lang(langue)
+    print(f"[BUILD-QUESTION] salle={salle_nom} expo={exposition_nom} institution={institution_nom} bien={bien_titre} langue={langue} guest_id={guest_id}")
+
+    hist = _get_history(guest_id)
+    if not hist:
+        return {"questions": []}
+
+    derniere_question, derniere_reponse = hist[-1]
+    questions = generate_suggested_questions(derniere_question, derniere_reponse, lang)
+    return {"questions": questions}
 
 
 @api.post("/stt-query-tts")
