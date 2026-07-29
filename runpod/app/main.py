@@ -151,7 +151,7 @@ Ne coupe JAMAIS une phrase en plein milieu."""
 CREATE_CREATIONS_PROMPT="""Tu es un guide expert et passionné de culture et d'art, avec une connaissance fine des œuvres, des artistes, des expositions et des institutions.
  
 À partir de la question précédente du visiteur (et de la réponse donnée, si elle est fournie), propose EXACTEMENT 5 nouvelles questions pertinentes, courtes et formulées naturellement, que le visiteur pourrait poser ensuite pour approfondir sa visite.
- 
+Si la derniere question n'est pas specifiée base tout juste sur l'exposition, la salle et l'institution actuelle.
 Règles de contexte :
 - Si des extraits de documents de référence sont fournis, base tes questions UNIQUEMENT sur les informations qu'ils contiennent (œuvres, artistes, salles, expositions, thèmes réellement présents) : n'invente aucun fait, nom ou détail qui n'y figure pas.
 - Si un bien culturel précis est en focus, concentre les 5 questions sur ce bien, jusqu'à ce que le visiteur pose lui-même une question en dehors de ce bien.
@@ -164,7 +164,7 @@ Règles de contexte :
   Ne couvre pas systématiquement tous ces angles : choisis les plus pertinents selon ce qui a déjà été dit.
 - Ne propose jamais une question déjà posée dans l'historique de la conversation, ni une simple reformulation d'une question précédente.
 - Formule les questions comme si c'était le visiteur lui-même qui les posait : naturelles, courtes, sans tournure robotique ou générique.
- 
+- Priorise toi sur l'exposition, la salle et l'institution actuelle avant tout
 Format de réponse :
 - Réponds dans la même langue que celle reçue dans la requête.
 - Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte avant ni après, sans balises Markdown, au format exact suivant :
@@ -1472,7 +1472,8 @@ async def build_questions(request: Request,
     langue: str | None = None,
     guest_id: str | None = None):
     """Construit 5 questions de suivi (au format JSON), ancrées sur les documents
-    RAG pertinents (bien en focus, salle/exposition, ou dernier échange du visiteur)."""
+    RAG pertinents pour tout le contexte disponible (salle, exposition, institution,
+    bien en focus, et dernier échange du visiteur)."""
     guest_id = guest_id or request.cookies.get("guest_id")
     lang     = _resolve_lang(langue)
     print(f"[BUILD-QUESTION] salle={salle_nom} expo={exposition_nom} institution={institution_nom} bien={bien_titre} langue={langue} guest_id={guest_id}")
@@ -1482,11 +1483,15 @@ async def build_questions(request: Request,
     if hist:
         derniere_question, derniere_reponse = hist[-1]
 
-    # Requête utilisée pour retrouver les documents pertinents : on privilégie
-    # le repère le plus précis disponible (bien en focus > dernière question
-    # posée > salle/exposition), pour ancrer les questions générées sur le
-    # vrai contenu de la collection plutôt que de laisser le LLM inventer.
-    requete_docs = bien_titre or derniere_question or salle_nom or exposition_nom
+    # Requête utilisée pour retrouver les documents pertinents : on combine tout
+    # le contexte de localisation disponible (salle, exposition, institution,
+    # bien en focus) plutôt que de n'en garder qu'un seul, pour que la recherche
+    # documentaire reflète bien tout ce que l'on sait du visiteur. La dernière
+    # question posée est ajoutée en plus si elle existe, pour affiner davantage.
+    contexte_parts = [p for p in (salle_nom, exposition_nom, institution_nom, bien_titre) if p]
+    if derniere_question:
+        contexte_parts.append(derniere_question)
+    requete_docs = " ".join(contexte_parts) if contexte_parts else None
 
     if requete_docs:
         resultats = search_documents(requete_docs, top_k=5)
