@@ -69,8 +69,7 @@ from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 import psycopg2
 import torch
-
-
+from typing import Annotated
 
 # ── Config ────────────────────────────────────────────────────────────────────
 GEMINI_API_KEY    = os.getenv("GEMINI_API_KEY",    "")
@@ -122,7 +121,7 @@ _CORS_ORIGINS = [
 
 SYSTEM_PROMPT = """Tu es un guide expert et passionné de culture et d'art. Tu connais parfaitement les œuvres, les artistes, les expositions et les institutions.
 Réponds dans la langue reçue de façon naturelle, chaleureuse et engageante.
-Reponds aux questions en s'appuyant uniquement sur les informations fournies dans le contexte. Ne dites pas des choses qu'on ne vous a pas demandé: 
+Reponds aux questions en s'appuyant uniquement sur les informations fournies dans le contexte. Ne dites pas des choses qu'on ne vous a pas demandé et ne dites pas Ah: 
 Fais la différence entre une œuvre, un portrait et un document.
 Si une information n'est pas dans le contexte, dis-le honnêtement sans inventer.
 La salle et l'exposition actuelle ou se trouve l'utilisateur represente sa localisation
@@ -149,12 +148,29 @@ Parle avec la langue que tu recevra dans la requete (ex: "fr", "en", "es").
 RÈGLE DE LONGUEUR : génére au maximum 150 caractéres
 Ne coupe JAMAIS une phrase en plein milieu."""
 
-CREATE_CREATIONS_PROMPT="""Tu es un guide expert et passionné de culture et d'art. Tu connais parfaitement les œuvres, les artistes, les expositions et les institutions.
-À partir de la question précédente du visiteur (et de la réponse donnée si elle est fournie), propose EXACTEMENT 2 nouvelles questions pertinentes, courtes et naturelles que le visiteur pourrait poser ensuite pour aller plus loin.
-Réponds dans la même langue que celle reçue dans la requête.
-Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte avant ni après, sans balises Markdown, au format exact suivant :
-{"questions": ["Première question ?", "Deuxième question ?"]}
+CREATE_CREATIONS_PROMPT="""Tu es un guide expert et passionné de culture et d'art, avec une connaissance fine des œuvres, des artistes, des expositions et des institutions.
+ 
+À partir de la question précédente du visiteur (et de la réponse donnée, si elle est fournie), propose EXACTEMENT 5 nouvelles questions pertinentes, courtes et formulées naturellement, que le visiteur pourrait poser ensuite pour approfondir sa visite.
+ 
+Règles de contexte :
+- Si des extraits de documents de référence sont fournis, base tes questions UNIQUEMENT sur les informations qu'ils contiennent (œuvres, artistes, salles, expositions, thèmes réellement présents) : n'invente aucun fait, nom ou détail qui n'y figure pas.
+- Si un bien culturel précis est en focus, concentre les 5 questions sur ce bien, jusqu'à ce que le visiteur pose lui-même une question en dehors de ce bien.
+- Si la question précédente porte sur une information générale (objet, bien, exposition, salle, thème), varie les angles des questions en piochant parmi, par exemple :
+  - la description de l'œuvre ou du sujet
+  - le sujet ou le thème représenté
+  - la technique ou le matériau utilisé
+  - le contexte historique ou l'artiste
+  - un lien avec d'autres œuvres, salles ou expositions
+  Ne couvre pas systématiquement tous ces angles : choisis les plus pertinents selon ce qui a déjà été dit.
+- Ne propose jamais une question déjà posée dans l'historique de la conversation, ni une simple reformulation d'une question précédente.
+- Formule les questions comme si c'était le visiteur lui-même qui les posait : naturelles, courtes, sans tournure robotique ou générique.
+ 
+Format de réponse :
+- Réponds dans la même langue que celle reçue dans la requête.
+- Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte avant ni après, sans balises Markdown, au format exact suivant :
+{"questions": ["Question 1 ?", "Question 2 ?", "Question 3 ?", "Question 4 ?", "Question 5 ?"]}
 """
+
 # ── État global ───────────────────────────────────────────────────────────────
 
 _model:          SentenceTransformer   = None
@@ -691,52 +707,66 @@ def get_rag_documents() -> list[str]:
 
 # ── Génération de réponse ─────────────────────────────────────────────────────
 
-def _get_history(guest_id: str | None) -> deque:
-    """Retourne (en la créant si besoin) le deque d'historique pour ce visiteur."""
-    if not guest_id or _conversation_histories is None:
+def _history_key(guest_id: str | None, salle_nom: str | None = None,
+                  exposition_nom: str | None = None, bien_titre: str | None = None) -> str | None:
+    """Construit la clé d'historique à partir du visiteur et de son contexte de
+    visite (salle / exposition / bien_titre, tous optionnels). Deux visiteurs
+    identiques mais dans un contexte différent (ex: focus sur une autre œuvre)
+    obtiennent ainsi des fils de conversation séparés."""
+    if not guest_id:
+        return None
+    return "|".join([guest_id, salle_nom or "", exposition_nom or "", bien_titre or ""])
+
+
+def _get_history(guest_id: str | None, salle_nom: str | None = None,
+                  exposition_nom: str | None = None, bien_titre: str | None = None) -> deque:
+    """Retourne (en la créant si besoin) le deque d'historique pour ce visiteur
+    dans ce contexte (salle/exposition/bien_titre)."""
+    key = _history_key(guest_id, salle_nom, exposition_nom, bien_titre)
+    if not key or _conversation_histories is None:
         return deque(maxlen=HISTORY_MAXLEN)
-    hist = _conversation_histories.get(guest_id)
+    hist = _conversation_histories.get(key)
     if hist is None:
         hist = deque(maxlen=HISTORY_MAXLEN)
-        _conversation_histories[guest_id] = hist
+        _conversation_histories[key] = hist
     return hist
 
 
-def _append_history(guest_id: str | None, question: str, answer: str) -> None:
-    """Ajoute l'échange (question, réponse) à l'historique de ce visiteur."""
-    if not guest_id or _conversation_histories is None:
+def _append_history(guest_id: str | None, question: str, answer: str,
+                     salle_nom: str | None = None, exposition_nom: str | None = None,
+                     bien_titre: str | None = None) -> None:
+    """Ajoute l'échange (question, réponse) à l'historique de ce visiteur/contexte."""
+    key = _history_key(guest_id, salle_nom, exposition_nom, bien_titre)
+    if not key or _conversation_histories is None:
         return
-    hist = _get_history(guest_id)
+    hist = _get_history(guest_id, salle_nom, exposition_nom, bien_titre)
     hist.append((question, answer))
-    # Ré-affecter pour rafraîchir le TTL de cette entrée dans le TTLCache
-    _conversation_histories[guest_id] = hist
+    _conversation_histories[key] = hist
 
 
-def _build_history_block(guest_id: str | None) -> str:
-    """Formate les 3 derniers échanges du visiteur pour les insérer dans le
-    prompt, afin que Gemini garde le fil de la conversation."""
-    hist = _get_history(guest_id)
-    print(f"[HISTORIQUE] : Guide : hist")
+def _build_history_block(guest_id: str | None, salle_nom: str | None = None,
+                          exposition_nom: str | None = None, bien_titre: str | None = None) -> str:
+    """Formate les derniers échanges du visiteur (pour ce contexte) pour les
+    insérer dans le prompt, afin que Gemini garde le fil de la conversation."""
+    hist = _get_history(guest_id, salle_nom, exposition_nom, bien_titre)
     if not hist:
         return ""
     tours = [f"Visiteur : {q}\nGuide : {a}" for q, a in hist]
-    print(f"[HISTORIQUE] : {q}\nGuide : {a}" for q, a in hist)
     return "Historique de la conversation (derniers échanges) :\n" + "\n\n".join(tours) + "\n\n"
 
 
 def _build_prompt(question: str, results: list,
                   salle_nom: str | None = None, exposition_nom: str | None = None,
                   institution_nom: str | None = None, langue: str = None,
-                  guest_id: str | None = None) -> str:
+                  guest_id: str | None = None, bien_titre: str | None = None) -> str:
     location_parts = []
     if salle_nom:        location_parts.append(f"Salle actuelle : {salle_nom}")
     if exposition_nom:   location_parts.append(f"Exposition en cours : {exposition_nom}")
     if institution_nom:  location_parts.append(f"Institution : {institution_nom}")
-    
+    if bien_titre:        location_parts.append(f"Bien culturel en focus : {bien_titre}")
+
     location_block = ("Localisation du visiteur :\n" + "\n".join(location_parts) + "\n\n") if location_parts else ""
-    history_block = _build_history_block(guest_id)
-    print(f"[HISTORY_BLOCK]{history_block}")
-    print(f"[CONVERSATION] {_conversation_histories}")
+    history_block = _build_history_block(guest_id, salle_nom, exposition_nom, bien_titre)
     print(f"[LANGUE] {langue}")
     
     if not results:
@@ -780,7 +810,8 @@ def _build_prompt(question: str, results: list,
 def generate_answer(question: str, results: list,
                     salle_nom: str | None = None, exposition_nom: str | None = None,
                     institution_nom: str | None = None,
-                    langue: str | None = None, guest_id: str | None = None) -> str:
+                    langue: str | None = None, guest_id: str | None = None,
+                    bien_titre: str | None = None) -> str:
     if not _llm:
         return "Le modèle IA n'est pas configuré (GEMINI_API_KEY manquante)."
 
@@ -793,9 +824,11 @@ def generate_answer(question: str, results: list,
         elif isinstance(r, (tuple, list)) and len(r) > 0:
             cache_parts.append(str(r[0])[:30])
 
-    # guest_id inclus dans la clé : une même question ne doit pas retourner une
-    # réponse mise en cache pour un autre visiteur ayant un historique différent.
-    cache_key = f"{question}_{salle_nom}_{exposition_nom}_{institution_nom}_{langue}_{guest_id}_{'|'.join(cache_parts)}"
+    # guest_id (+ contexte salle/exposition/bien_titre) inclus dans la clé :
+    # une même question ne doit pas retourner une réponse mise en cache pour
+    # un autre visiteur, ou pour le même visiteur dans un contexte différent
+    # (historique différent selon l'endroit / l'œuvre en focus).
+    cache_key = f"{question}_{salle_nom}_{exposition_nom}_{institution_nom}_{langue}_{guest_id}_{bien_titre}_{'|'.join(cache_parts)}"
     
     # ── 2. Vérification du cache ──
     if _answer_cache is not None and cache_key in _answer_cache:
@@ -807,9 +840,10 @@ def generate_answer(question: str, results: list,
         # Nettoyage et récupération de la langue cible
         langue_str = str(langue).strip().lower() if langue else "fr"
         langue_resolue = _KOKORO_ORIGINAL_LANG.get(langue_str, "francais")
-        print(f"[Génération] Question : {question[:50]} | Langue : {langue_resolue} | Visiteur : {guest_id}")
+        print(f"[Génération] Question : {question[:50]} | Langue : {langue_resolue} | Visiteur : {guest_id} | Bien : {bien_titre}")
         # Construction sécurisée du prompt
-        prompt_complet = _build_prompt(question, results, salle_nom, exposition_nom, institution_nom, langue=langue_resolue, guest_id=guest_id)
+        prompt_complet = _build_prompt(question, results, salle_nom, exposition_nom, institution_nom,
+                                        langue=langue_resolue, guest_id=guest_id, bien_titre=bien_titre)
         
         print(f"[AVANT GEN]...")  # Affiche les 200 premiers caractères du prompt
         # Requête à l'API Gemini
@@ -835,8 +869,8 @@ def generate_answer(question: str, results: list,
         if _answer_cache is not None:
             _answer_cache[cache_key] = answer
 
-        # Ajout à l'historique des 3 derniers échanges de ce visiteur
-        _append_history(guest_id, question, answer)
+        # Ajout à l'historique de ce visiteur, pour ce contexte (salle/expo/bien_titre)
+        _append_history(guest_id, question, answer, salle_nom, exposition_nom, bien_titre)
 
         return answer
         
@@ -845,20 +879,34 @@ def generate_answer(question: str, results: list,
         return f"Erreur lors de la génération : {exc}"
 
 
-def generate_suggested_questions(question: str, answer: str | None = None,
-                                  langue: str | None = None) -> list[str]:
-    """Génère 2 questions de suivi à partir de la question précédente (et de sa
-    réponse si fournie), en s'appuyant sur CREATE_CREATIONS_PROMPT. Renvoie une
-    liste de 0 à 2 chaînes ; liste vide en cas d'échec (LLM absent, JSON invalide, etc.)."""
+def generate_suggested_questions(question: str | None = None, answer: str | None = None,
+                                  langue: str | None = None,
+                                  documents: list[str] | None = None) -> list[str]:
+    """Génère 5 questions de suivi, en s'appuyant sur CREATE_CREATIONS_PROMPT.
+    - question/answer : dernier échange du visiteur, si disponible (contexte conversationnel).
+    - documents : extraits de documents RAG (contenu réel des œuvres/salles/expositions)
+      sur lesquels ancrer les questions, pour éviter que le LLM n'en invente.
+    Renvoie une liste de 0 à 5 chaînes ; liste vide en cas d'échec (LLM absent, JSON invalide, etc.)."""
     if not _llm:
         return []
 
     langue_str = str(langue).strip().lower() if langue else "fr"
     langue_resolue = _KOKORO_ORIGINAL_LANG.get(langue_str, "francais")
 
-    contexte = f"Question précédente du visiteur : {question}"
+    contexte = ""
+    if question:
+        contexte += f"Question précédente du visiteur : {question}"
     if answer:
         contexte += f"\nRéponse donnée au visiteur : {answer}"
+
+    if documents:
+        # Chaque extrait est tronqué pour ne pas exploser la taille du prompt
+        extraits = "\n".join(f"- {str(d).strip()[:400]}" for d in documents if str(d).strip())
+        if extraits:
+            contexte += f"\n\nExtraits de documents de référence disponibles :\n{extraits}"
+
+    if not contexte.strip():
+        contexte = "Aucune question précédente ni document disponible : propose des questions d'accueil générales et engageantes."
 
     prompt = f"{CREATE_CREATIONS_PROMPT}\n\n{contexte}\n\nLangue attendue : {langue_resolue}"
 
@@ -1305,6 +1353,7 @@ class QueryRequest(BaseModel):
     salle_nom:       str | None = None
     exposition_nom:  str | None = None
     institution_nom: str | None = None
+    bien_titre:      str | None = None
     langue:          str | None = None
 
 
@@ -1354,7 +1403,7 @@ def query(req: QueryRequest):
     logger.info(f"langue {req.langue}")
     results = search_documents(req.question, req.top_k)
     print(f"[QUERY] {req.question} → {len(results)} résultats")
-    answer  = generate_answer(req.question, results, req.salle_nom, req.exposition_nom, req.institution_nom, req.langue)
+    answer  = generate_answer(req.question, results, req.salle_nom, req.exposition_nom, req.institution_nom, req.langue, bien_titre=req.bien_titre)
     print(f"[QUERY_REPONSE] Réponse : {answer[:100]}...")
     formatted_sources = []
     for r in results:
@@ -1422,26 +1471,41 @@ async def build_questions(request: Request,
     bien_titre: str | None = None,
     langue: str | None = None,
     guest_id: str | None = None):
-    """Construit 2 questions de suivi (au format JSON) à partir de la dernière
-    question/réponse du visiteur, retrouvée dans son historique de conversation."""
+    """Construit 5 questions de suivi (au format JSON), ancrées sur les documents
+    RAG pertinents (bien en focus, salle/exposition, ou dernier échange du visiteur)."""
     guest_id = guest_id or request.cookies.get("guest_id")
     lang     = _resolve_lang(langue)
     print(f"[BUILD-QUESTION] salle={salle_nom} expo={exposition_nom} institution={institution_nom} bien={bien_titre} langue={langue} guest_id={guest_id}")
 
-    hist = _get_history(guest_id)
-    if not hist:
-        return {"questions": []}
+    hist = _get_history(guest_id, salle_nom, exposition_nom, bien_titre)
+    derniere_question, derniere_reponse = (None, None)
+    if hist:
+        derniere_question, derniere_reponse = hist[-1]
 
-    derniere_question, derniere_reponse = hist[-1]
-    questions = generate_suggested_questions(derniere_question, derniere_reponse, lang)
+    # Requête utilisée pour retrouver les documents pertinents : on privilégie
+    # le repère le plus précis disponible (bien en focus > dernière question
+    # posée > salle/exposition), pour ancrer les questions générées sur le
+    # vrai contenu de la collection plutôt que de laisser le LLM inventer.
+    requete_docs = bien_titre or derniere_question or salle_nom or exposition_nom
+
+    if requete_docs:
+        resultats = search_documents(requete_docs, top_k=5)
+        documents = [r.get("contenu", "") for r in resultats]
+    else:
+        # Aucun repère du tout (premier contact, aucune localisation) :
+        # on prend un échantillon des documents disponibles en base.
+        documents = get_rag_documents()[:5]
+
+    questions = generate_suggested_questions(derniere_question, derniere_reponse, lang, documents=documents)
     return {"questions": questions}
 
 
 @api.post("/stt-query-tts")
 async def stt_query_tts(
     request: Request,
-    audio: UploadFile = File(...),
+    audio: Annotated[UploadFile | None, File()] = None,
     top_k: int = 4,
+    question_textuel:str | None =None,
     salle_nom: str | None = None,
     exposition_nom: str | None = None,
     institution_nom: str | None = None,
@@ -1455,36 +1519,43 @@ async def stt_query_tts(
     print(f"[Guest Id] {guest_id}")
     print(f"[STT-QUERY-TTS] salle={salle_nom} expo={exposition_nom} institution={institution_nom} bien={bien_titre} top_k={top_k} langue={langue} guest_id={guest_id}")
     lang        = _resolve_lang(langue)
-    audio_bytes = await audio.read()
-    if not audio_bytes:
-        raise HTTPException(status_code=400, detail="Fichier audio vide.")
+    question=None
+    if question_textuel==None:
+        audio_bytes = await audio.read()
+        if not audio_bytes:
+            raise HTTPException(status_code=400, detail="Fichier audio vide.")
 
-    def _wav_response(text: str, question: str = "-", langue:str=None) -> FileResponse:
-        wav = _tts_safe(text,langue=langue)
-        if wav is None:
-            raise HTTPException(status_code=503, detail="TTS non disponible.")
-        return FileResponse(wav, media_type="audio/wav", filename="response.wav",
+        def _wav_response(text: str, question: str = "-", langue:str=None) -> FileResponse:
+            wav = _tts_safe(text,langue=langue)
+            if wav is None:
+                raise HTTPException(status_code=503, detail="TTS non disponible.")
+            return FileResponse(wav, media_type="audio/wav", filename="response.wav",
                             headers={"X-Question": question, "X-Answer-Text": _safe_header(text),
                                      "Access-Control-Expose-Headers": "X-Question, X-Answer-Text"})
 
-    if not salle_nom and not exposition_nom and not institution_nom:
-        return _wav_response("Vous n'etes pas encore dans une salle d'exposition. Veuillez vous deplacer vers une salle.")
-    print(f"[STT-QUERY-TTS] Transcription audio ({len(audio_bytes)} bytes)...")
-    try:
-        question = _transcribe(audio_bytes, audio.content_type or "audio/wav",langue=langue)
+        if not salle_nom and not exposition_nom and not institution_nom:
+            return _wav_response("Vous n'etes pas encore dans une salle d'exposition. Veuillez vous deplacer vers une salle.")
+        print(f"[STT-QUERY-TTS] Transcription audio ({len(audio_bytes)} bytes)...")
+    
+        try:
+            question = _transcribe(audio_bytes, audio.content_type or "audio/wav",langue=langue)
         
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Erreur STT : {exc}")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Erreur STT : {exc}")
+
+        if not question or question.strip().lower() in {"", "[inaudible]", "[silence]"} or len(question.strip()) < 3:
+                return _wav_response("Je n'ai pas entendu votre question. Pouvez-vous repeter ?",langue=langue)
+    else:
+            question=question_textuel
 
     if bien_titre:
                 question = f"{question} (Focus toi sur ce bien culturel : {bien_titre})"
 
-    if not question or question.strip().lower() in {"", "[inaudible]", "[silence]"} or len(question.strip()) < 3:
-        return _wav_response("Je n'ai pas entendu votre question. Pouvez-vous repeter ?",langue=langue)
+   
 
     t0 = time.time(); results = search_documents(question, top_k)
     print(f"[PERF] RAG    : {(time.time()-t0)*1000:.0f}ms")
-    t0 = time.time(); answer = generate_answer(question, results, salle_nom, exposition_nom, institution_nom, lang, guest_id=guest_id)
+    t0 = time.time(); answer = generate_answer(question, results, salle_nom, exposition_nom, institution_nom, lang, guest_id=guest_id, bien_titre=bien_titre)
     print(f"[PERF] Gemini : {(time.time()-t0)*1000:.0f}ms")
     t0 = time.time(); wav_path = text_to_speech(answer, langue=lang)
     print(f"[PERF] TTS    : {(time.time()-t0)*1000:.0f}ms {langue} {lang} {exposition_nom} {institution_nom} {answer}")
