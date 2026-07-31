@@ -1507,7 +1507,8 @@ async def build_questions(request: Request,
         contexte_parts.append(f"Question : {derniere_question}")
 
     requete_docs = " ".join(contexte_parts) if contexte_parts else None
-    print(f"[CREATE_QUESTIONS] {requete_docs}")
+
+    logger.info(f"[CREATE_QUESTIONS] {requete_docs}")
 
     if requete_docs:
         resultats = search_documents(requete_docs, top_k=5)
