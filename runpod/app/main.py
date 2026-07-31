@@ -805,7 +805,7 @@ def _build_prompt(question: str, results: list,
 
     context = "\n\n---\n\n".join(context_parts)
     print(f"[Context] {context}")
-    return f"{SYSTEM_PROMPT}\n\n{location_block}{history_block}Contexte :\n{context}\n\nQuestion : {question}.  "
+    return f"Tu dois générer ta réponse finale UNIQUEMENT dans la langue suivante LANGUE OBLIGATOIRE {langue} {SYSTEM_PROMPT}\n\n{location_block}{history_block}Contexte :\n{context}\n\nQuestion : {question}.  "
 
 
 def generate_answer(question: str, results: list,
