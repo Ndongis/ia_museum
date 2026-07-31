@@ -931,7 +931,7 @@ def generate_suggested_questions(question: str | None = None, answer: str | None
         if not isinstance(questions, list):
             return []
         # On force la sortie à 2 questions maximum, sous forme de chaînes propres
-        return [str(q).strip() for q in questions[:2] if str(q).strip()]
+        return [str(q).strip() for q in questions[:5] if str(q).strip()]
 
     except Exception as exc:
         print(f"❌ ERROR generate_suggested_questions : {exc}")
