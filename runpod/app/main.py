@@ -908,9 +908,9 @@ def generate_suggested_questions(question: str | None = None, answer: str | None
 
     if not contexte.strip():
         contexte = "Aucune question précédente ni document disponible : propose des questions d'accueil générales et engageantes."
-
+    
     prompt = f"{CREATE_CREATIONS_PROMPT}\n\n{contexte}\n\n Langue de generation de texte : {langue_resolue}"
-
+    logger.info(f"[PROMPT] {prompt}")
     try:
         response = _llm.models.generate_content(
             model="gemini-2.5-flash",
