@@ -164,7 +164,7 @@ Règles de contexte :
   Ne couvre pas systématiquement tous ces angles : choisis les plus pertinents selon ce qui a déjà été dit.
 - Ne propose jamais une question déjà posée dans l'historique de la conversation, ni une simple reformulation d'une question précédente.
 - Formule les questions comme si c'était le visiteur lui-même qui les posait : naturelles, courtes, sans tournure robotique ou générique.
-- Priorise toi sur l'exposition, la salle et l'institution actuelle avant tout et donne des questions que tu me répondre sans problémes.
+- Priorise toi sur l'exposition, la salle et l'institution actuelle avant tout et si bien_titre est presen est absent avant tout et donne des questions que tu me répondre sans problémes.
 - Ne pas confondre documents, oeuvres et portrait
 Format de réponse :
 - Réponds dans la même langue que celle reçue dans la requête.
@@ -1489,9 +1489,23 @@ async def build_questions(request: Request,
     # bien en focus) plutôt que de n'en garder qu'un seul, pour que la recherche
     # documentaire reflète bien tout ce que l'on sait du visiteur. La dernière
     # question posée est ajoutée en plus si elle existe, pour affiner davantage.
-    contexte_parts = [p for p in (salle_nom, exposition_nom, institution_nom, bien_titre) if p]
+    contexte_parts = []
+
+    if salle_nom:
+        contexte_parts.append(f"Salle : {salle_nom}")
+
+    if exposition_nom:
+        contexte_parts.append(f"Exposition : {exposition_nom}")
+
+    if institution_nom:
+        contexte_parts.append(f"Institution : {institution_nom}")
+
+    if bien_titre:
+        contexte_parts.append(f"Œuvre : {bien_titre}")
+
     if derniere_question:
-        contexte_parts.append(derniere_question)
+        contexte_parts.append(f"Question : {derniere_question}")
+
     requete_docs = " ".join(contexte_parts) if contexte_parts else None
 
     if requete_docs:
