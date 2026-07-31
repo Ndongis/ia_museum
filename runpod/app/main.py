@@ -917,8 +917,8 @@ def generate_suggested_questions(question: str | None = None, answer: str | None
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.4,
-                max_output_tokens=200,
-                thinking_config=types.ThinkingConfig(thinking_budget=3),
+                max_output_tokens=2000,
+                thinking_config=types.ThinkingConfig(thinking_budget=1500),
                 response_mime_type="application/json",
             ),
         )
