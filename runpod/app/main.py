@@ -164,7 +164,7 @@ Règles de contexte :
   Ne couvre pas systématiquement tous ces angles : choisis les plus pertinents selon ce qui a déjà été dit.
 - Ne propose jamais une question déjà posée dans l'historique de la conversation, ni une simple reformulation d'une question précédente.
 - Formule les questions comme si c'était le visiteur lui-même qui les posait : naturelles, courtes, sans tournure robotique ou générique.
-- Priorise toi sur l'exposition, la salle et l'institution actuelle avant tout
+- Priorise toi sur l'exposition, la salle et l'institution actuelle avant tout et donne des questions que tu me répondre sans problémes.
 Format de réponse :
 - Réponds dans la même langue que celle reçue dans la requête.
 - Réponds UNIQUEMENT avec un objet JSON valide, sans aucun texte avant ni après, sans balises Markdown, au format exact suivant :
