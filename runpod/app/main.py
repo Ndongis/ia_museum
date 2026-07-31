@@ -771,7 +771,7 @@ def _build_prompt(question: str, results: list,
     print(f"[LANGUE] {langue}")
     
     if not results:
-        return f"{SYSTEM_PROMPT}\n\n{location_block}{history_block}Aucun document.\n\nQuestion : {question}. Langue de generation du texte : {langue}"
+        return f"Tu dois générer ta réponse finale UNIQUEMENT dans la langue suivante LANGUE OBLIGATOIRE {langue} {SYSTEM_PROMPT}\n\n{location_block}{history_block}Aucun document.\n\nQuestion : {question}."
 
     # ── CONSTRUCTION SÉCURISÉE DU CONTEXTE (Accepte les dictionnaires et les tuples bruts) ──
     context_parts = []
@@ -805,7 +805,7 @@ def _build_prompt(question: str, results: list,
 
     context = "\n\n---\n\n".join(context_parts)
     print(f"[Context] {context}")
-    return f"{SYSTEM_PROMPT}\n\n{location_block}{history_block}Contexte :\n{context}\n\nQuestion : {question}.  Répondez avec langue : {langue}"
+    return f"{SYSTEM_PROMPT}\n\n{location_block}{history_block}Contexte :\n{context}\n\nQuestion : {question}.  "
 
 
 def generate_answer(question: str, results: list,
@@ -853,9 +853,9 @@ def generate_answer(question: str, results: list,
         contents=prompt_complet,
         config=types.GenerateContentConfig(
         temperature=0.2,
-        max_output_tokens=500,
+        max_output_tokens=800,
         thinking_config=types.ThinkingConfig(
-            thinking_budget=4
+            thinking_budget=500
             ),
         ),
         )
@@ -1649,7 +1649,7 @@ async def explain(req: ExplainRequest):
         f"Donne une explication naturelle et engageante en t'appuyant sur sa description, "
         f"son historique, sa technique et son sujet en 3 phrases."
     )
-    print(f"[PROMPT] {prompt}")
+    
     explain_key = f"expl_{_audio_cache_key(req.bien_titre + str(req.salle_nom) + str(req.exposition_nom) + str(req.institution_nom) + str(req.langue))}"
 
     # Cache audio complet
